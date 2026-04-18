@@ -4,14 +4,15 @@
 
 variable "instance_alias" {
   description = <<-EOT
-    The alias for the AWS Connect instance. This must be unique within your AWS account.
-    It will be used as part of the instance URL: https://[instance_alias].my.connect.aws
+    The alias for the AWS Connect instance.
+    This becomes part of the instance URL: https://[instance_alias].my.connect.aws
     
     Constraints:
     - Must be 1-62 characters
-    - Can contain lowercase letters, numbers, and hyphens
+    - Lowercase letters, numbers, and hyphens only
     - Must start with a letter
     - Cannot end with a hyphen
+    - Must be unique within your AWS account
     
     Example: "customer-support"
   EOT
@@ -24,7 +25,7 @@ variable "instance_alias" {
 }
 
 # ============================================================================
-# Instance Configuration
+# Identity Management
 # ============================================================================
 
 variable "identity_management_type" {
@@ -32,9 +33,9 @@ variable "identity_management_type" {
     Specifies the identity management type for the Connect instance.
     
     Options:
-    - CONNECT_MANAGED: Connect manages user identities (default, easiest setup)
+    - CONNECT_MANAGED: Connect manages user identities (simplest setup)
     - SAML: Use SAML 2.0-based authentication (enterprise SSO)
-    - EXISTING_DIRECTORY: Use AWS Directory Service (Microsoft AD, AD Connector, or Simple AD)
+    - EXISTING_DIRECTORY: Use AWS Directory Service
     
     Default: CONNECT_MANAGED
   EOT
@@ -47,10 +48,47 @@ variable "identity_management_type" {
   }
 }
 
+variable "directory_id" {
+  description = <<-EOT
+    AWS Directory Service directory ID.
+    Required when identity_management_type = "EXISTING_DIRECTORY"
+    
+    The directory must be:
+    - In the same region as the Connect instance
+    - Microsoft AD, AD Connector, or Simple AD
+    
+    Example: "d-1234567890"
+  EOT
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.directory_id == null || can(regex("^d-[0-9a-f]{10}$", var.directory_id))
+    error_message = "directory_id must be in the format 'd-xxxxxxxxxx' where x is a hexadecimal digit."
+  }
+}
+
+variable "saml_metadata_url" {
+  description = <<-EOT
+    SAML metadata URL for SAML-based authentication.
+    Required when identity_management_type = "SAML"
+    
+    This URL points to your identity provider's SAML metadata document.
+    
+    Example: "https://portal.sso.us-east-1.amazonaws.com/saml/metadata/..."
+  EOT
+  type        = string
+  default     = null
+}
+
+# ============================================================================
+# Instance Configuration
+# ============================================================================
+
 variable "inbound_calls_enabled" {
   description = <<-EOT
     Whether inbound calls are enabled for the Connect instance.
-    Set to false only if you're using Connect for outbound-only campaigns.
+    Set to false only for outbound-only contact centers.
     
     Default: true
   EOT
@@ -61,9 +99,9 @@ variable "inbound_calls_enabled" {
 variable "outbound_calls_enabled" {
   description = <<-EOT
     Whether outbound calls are enabled for the Connect instance.
-    Required for: Preview campaigns, Progressive campaigns, Predictive campaigns.
+    Required for outbound campaigns (preview, progressive, predictive).
     
-    Default: false (enable only when needed to reduce costs)
+    Default: false
   EOT
   type        = bool
   default     = false
@@ -72,9 +110,9 @@ variable "outbound_calls_enabled" {
 variable "contact_flow_logs_enabled" {
   description = <<-EOT
     Whether contact flow logs are enabled.
-    Logs are sent to CloudWatch Logs for debugging and monitoring.
+    Logs are sent to CloudWatch Logs under /aws/connect/[instance_alias]
     
-    Recommended: true for production (helps with troubleshooting)
+    Recommended: true for production (helps with debugging)
     Default: true
   EOT
   type        = bool
@@ -84,13 +122,14 @@ variable "contact_flow_logs_enabled" {
 variable "contact_lens_enabled" {
   description = <<-EOT
     Whether to enable Contact Lens for Amazon Connect.
-    Contact Lens provides:
+    
+    Features:
     - Real-time and post-call analytics
     - Sentiment analysis
     - Call categorization
     - Supervisor alerts
     
-    Note: Additional charges apply ($0.015/min analyzed)
+    Cost: Additional charges apply (~$0.015/min analyzed)
     Default: false
   EOT
   type        = bool
@@ -100,10 +139,10 @@ variable "contact_lens_enabled" {
 variable "early_media_enabled" {
   description = <<-EOT
     Whether early media is enabled.
-    Early media allows callers to hear audio before the call is connected.
+    Allows callers to hear audio before the call is answered.
     
     Use cases:
-    - Playing prompts while agents are being contacted
+    - Playing prompts while contacting agents
     - Ring-back tones
     - Music on hold during transfer
     
@@ -115,7 +154,7 @@ variable "early_media_enabled" {
 
 variable "auto_resolve_best_voices" {
   description = <<-EOT
-    Whether Amazon Connect automatically resolves the best voices for text-to-speech.
+    Whether Amazon Connect automatically resolves the best voices for TTS.
     When enabled, Connect uses the most natural-sounding voices available.
     
     Default: true
@@ -130,15 +169,14 @@ variable "auto_resolve_best_voices" {
 
 variable "storage_config" {
   description = <<-EOT
-    Storage configuration for call recordings, chat transcripts, and attachments.
+    Storage configuration for recordings, transcripts, reports, and attachments.
     
     Structure:
     {
-      # For call recordings
       call_recordings = {
-        storage_type = "S3"  # or "KINESIS_VIDEO_STREAM", "KINESIS_STREAM", "KINESIS_FIREHOSE"
+        storage_type = "S3"  # or "KINESIS_VIDEO_STREAM"
         s3_config = {
-          bucket_name   = "my-recordings-bucket"
+          bucket_name   = "my-recordings"
           bucket_prefix = "recordings/"  # Optional
           encryption_config = {          # Optional
             encryption_type = "KMS"      # or "AES256"
@@ -147,70 +185,57 @@ variable "storage_config" {
         }
       }
       
-      # For chat transcripts
       chat_transcripts = {
         storage_type = "S3"
         s3_config = {
-          bucket_name   = "my-transcripts-bucket"
+          bucket_name   = "my-transcripts"
           bucket_prefix = "transcripts/"
         }
       }
       
-      # For scheduled reports
       scheduled_reports = {
         storage_type = "S3"
         s3_config = {
-          bucket_name   = "my-reports-bucket"
+          bucket_name   = "my-reports"
           bucket_prefix = "reports/"
         }
       }
       
-      # For attachments (file uploads in chat)
       attachments = {
         storage_type = "S3"
         s3_config = {
-          bucket_name   = "my-attachments-bucket"
+          bucket_name   = "my-attachments"
           bucket_prefix = "attachments/"
+        }
+      }
+      
+      media_streams = {
+        storage_type = "KINESIS_VIDEO_STREAM"
+        kinesis_config = {
+          prefix                 = "media-streams"
+          retention_period_hours = 24
+          encryption_config = {
+            encryption_type = "KMS"
+            key_id          = "arn:..."
+          }
         }
       }
     }
     
-    Note: S3 buckets must be in the same region as the Connect instance
+    Note: S3 buckets must be in the same region as the Connect instance.
+          Create buckets separately before applying this module.
   EOT
   type        = any
   default     = {}
-}
 
-# ============================================================================
-# Identity Integration
-# ============================================================================
-
-variable "directory_id" {
-  description = <<-EOT
-    AWS Directory Service directory ID.
-    Required only when identity_management_type = "EXISTING_DIRECTORY"
-    
-    The directory must be:
-    - In the same region as the Connect instance
-    - One of: Microsoft AD, AD Connector, or Simple AD
-    
-    Example: "d-1234567890"
-  EOT
-  type        = string
-  default     = null
-}
-
-variable "saml_metadata_url" {
-  description = <<-EOT
-    SAML metadata URL for SAML-based authentication.
-    Required only when identity_management_type = "SAML"
-    
-    This URL points to your identity provider's SAML metadata document.
-    
-    Example: "https://portal.sso.us-east-1.amazonaws.com/saml/metadata/..."
-  EOT
-  type        = string
-  default     = null
+  validation {
+    condition = alltrue([
+      for storage_type, config in var.storage_config : (
+        contains(["call_recordings", "chat_transcripts", "scheduled_reports", "attachments", "media_streams"], storage_type)
+      )
+    ])
+    error_message = "storage_config keys must be one of: call_recordings, chat_transcripts, scheduled_reports, attachments, media_streams."
+  }
 }
 
 # ============================================================================
@@ -219,54 +244,21 @@ variable "saml_metadata_url" {
 
 variable "tags" {
   description = <<-EOT
-    Tags to apply to all resources created by this module.
+    Tags to apply to the Connect instance and related resources.
     
     Recommended tags:
     - Environment: dev, staging, prod
     - ManagedBy: Terraform
     - Project: project-name
     - CostCenter: cost-center-id
-    - Team: team-name
     
     Example:
     {
       Environment = "production"
       ManagedBy   = "Terraform"
       Project     = "CustomerSupport"
-      CostCenter  = "CC-12345"
     }
   EOT
   type        = map(string)
   default     = {}
 }
-
-# ============================================================================
-# Future Module Variables (v0.2.0+)
-# ============================================================================
-
-# variable "hours_of_operation" {
-#   description = "List of hours of operation configurations"
-#   type = list(object({
-#     name        = string
-#     description = optional(string)
-#     timezone    = string
-#     config = list(object({
-#       day        = string
-#       start_time = object({ hours = number, minutes = number })
-#       end_time   = object({ hours = number, minutes = number })
-#     }))
-#   }))
-#   default = []
-# }
-
-# variable "queues" {
-#   description = "List of queue configurations"
-#   type        = any
-#   default     = []
-# }
-
-# variable "contact_flows" {
-#   description = "List of contact flow configurations"
-#   type        = any
-#   default     = []
-# }

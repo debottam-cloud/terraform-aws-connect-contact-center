@@ -1,0 +1,24 @@
+# ============================================================================
+# Example Terraform Variables
+# ============================================================================
+# Copy this file to terraform.tfvars and customize for your environment
+# ============================================================================
+
+# Instance configuration
+instance_alias = "my-contact-center"
+
+# AWS region
+aws_region = "us-east-1"
+
+# Call recordings
+enable_call_recordings   = true
+recordings_retention_days = 90
+
+# Tags
+tags = {
+  Environment = "development"
+  Project     = "ContactCenter"
+  Team        = "CustomerSupport"
+  ManagedBy   = "Terraform"
+  CostCenter  = "CC-12345"
+}

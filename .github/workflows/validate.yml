@@ -1,0 +1,211 @@
+name: Terraform Validate and Lint
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  # ===========================================================================
+  # TFLint
+  # ===========================================================================
+  tflint:
+    name: TFLint
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup TFLint
+        uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: latest
+
+      - name: Show TFLint version
+        run: tflint --version
+
+      - name: Initialize TFLint
+        run: tflint --init
+
+      - name: Run TFLint (root)
+        run: tflint --format compact
+
+      - name: Run TFLint (modules)
+        run: |
+          echo "=========================================="
+          echo "Linting all modules..."
+          echo "=========================================="
+          
+          for dir in modules/*/; do
+            if [ -f "$dir/main.tf" ]; then
+              echo ""
+              echo "📦 Linting: $dir"
+              echo "------------------------------------------"
+              (cd "$dir" && tflint --format compact) || exit 1
+            fi
+          done
+          
+          echo ""
+          echo "✅ All modules passed TFLint"
+
+  # ===========================================================================
+  # Terraform Validation
+  # ===========================================================================
+  validate:
+    name: Terraform Validate
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        terraform_version: ["1.5.7", "1.9.8", "latest"]
+        module:
+          - "."
+          - modules/connect-instance
+          # Add more modules as they're created
+          # - modules/hours-of-operation
+          # - modules/queues
+          - examples/minimal
+          # - examples/standard
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ matrix.terraform_version }}
+
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive
+        working-directory: ${{ matrix.module }}
+
+      - name: Terraform Init
+        run: terraform init -backend=false
+        working-directory: ${{ matrix.module }}
+
+      - name: Terraform Validate
+        run: terraform validate
+        working-directory: ${{ matrix.module }}
+
+  # ===========================================================================
+  # Security Scanning with Checkov (Optional but Recommended)
+  # ===========================================================================
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Checkov
+        id: checkov
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: .
+          framework: terraform
+          soft_fail: true  # Don't fail the build, just report
+          output_format: cli
+          download_external_modules: true
+
+  # ===========================================================================
+  # Documentation Check
+  # ===========================================================================
+  docs-check:
+    name: Documentation Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check for README in modules
+        run: |
+          echo "Checking for README files in modules..."
+          
+          MISSING_README=0
+          
+          for dir in modules/*/; do
+            if [ ! -f "$dir/README.md" ]; then
+              echo "❌ Missing README.md in $dir"
+              MISSING_README=1
+            else
+              echo "✅ Found README.md in $dir"
+            fi
+          done
+          
+          if [ $MISSING_README -eq 1 ]; then
+            echo ""
+            echo "⚠️  Some modules are missing README.md files"
+            echo "Please add documentation for all modules"
+            exit 1
+          fi
+          
+          echo ""
+          echo "✅ All modules have README.md files"
+
+      - name: Check for examples
+        run: |
+          echo "Checking for example configurations..."
+          
+          if [ ! -d "examples" ] || [ -z "$(ls -A examples)" ]; then
+            echo "⚠️  No examples found"
+            exit 1
+          fi
+          
+          echo "✅ Examples directory exists and is not empty"
+
+  # ===========================================================================
+  # JSON Schema Validation (when schemas are added)
+  # ===========================================================================
+  schema-validation:
+    name: JSON Schema Validation
+    runs-on: ubuntu-latest
+    if: false  # Disabled until schemas are created
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install jsonschema
+        run: pip install jsonschema
+
+      - name: Validate JSON configurations
+        run: |
+          echo "Validating JSON configuration files..."
+          
+          # This will be enabled when we add JSON configs
+          # python3 scripts/validate_schema.py
+          
+          echo "✅ Schema validation passed"
+
+  # ===========================================================================
+  # Success Summary
+  # ===========================================================================
+  success:
+    name: All Checks Passed
+    runs-on: ubuntu-latest
+    needs: [tflint, validate, security-scan, docs-check]
+
+    steps:
+      - name: Success Message
+        run: |
+          echo "=========================================="
+          echo "✅ All validation checks passed!"
+          echo "=========================================="
+          echo ""
+          echo "✅ TFLint"
+          echo "✅ Terraform Validation"
+          echo "✅ Security Scan"
+          echo "✅ Documentation Check"
+          echo ""
+          echo "Ready to merge! 🚀"
